@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { Alert, Button, ScrollView, Switch, Text, View } from "react-native";
+import { Alert, Button, Platform, ScrollView, Switch, Text, View } from "react-native";
 import { DemoBanner } from "../../components/DemoBanner";
 import { demoMode } from "../../lib/mode";
 import { useAppSession } from "../../lib/session";
+import { openPlaidLinkWeb } from "../../lib/plaidWeb";
 
 type Connection = { id: string; institutionName: string; health: string; lastSuccessfulSyncAt?: string };
 
@@ -36,8 +37,12 @@ export default function Connect() {
     setBusy(true);
     try {
       if (!consentAccepted) throw new Error("Review and accept the financial-data consent before connecting.");
-      const { createPlaidLinkSession } = await loadPlaidLink();
       const token = await api.post<{ linkToken: string; linkSessionId: string }>("/v1/plaid/link-token", { consentAccepted, consentVersion: "v1" });
+      if (Platform.OS === "web") {
+        await openPlaidLinkWeb({ token: token.linkToken, onExit: (linkError) => { setBusy(false); if (linkError) setError(linkError.display_message ?? "Connection was not completed."); }, onSuccess: async (publicToken, metadata) => { try { await api.post("/v1/plaid/exchange", { publicToken, linkSessionId: token.linkSessionId, institutionId: metadata.institution?.id, institutionName: metadata.institution?.name ?? "Connected institution" }); await refresh(); } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to exchange the connection."); } finally { setBusy(false); } } });
+        return;
+      }
+      const { createPlaidLinkSession } = await loadPlaidLink();
       const session = await createPlaidLinkSession({
         token: token.linkToken,
         onEvent: () => undefined,
@@ -60,8 +65,9 @@ export default function Connect() {
     if (!api) return;
     setBusy(true);
     try {
-      const { createPlaidLinkSession } = await loadPlaidLink();
       const token = await api.post<{ linkToken: string }>(`/v1/plaid/items/${connection.id}/update-link-token`);
+      if (Platform.OS === "web") { await openPlaidLinkWeb({ token: token.linkToken, onExit: () => setBusy(false), onSuccess: async () => { await sync(connection); setBusy(false); await refresh(); } }); return; }
+      const { createPlaidLinkSession } = await loadPlaidLink();
       const session = await createPlaidLinkSession({ token: token.linkToken, onEvent: () => undefined, onExit: () => setBusy(false), onSuccess: async () => { await sync(connection); setBusy(false); await refresh(); } });
       await session.open();
     } catch (cause) { setBusy(false); Alert.alert("Reconnect", cause instanceof Error ? cause.message : "Unable to reconnect."); }
