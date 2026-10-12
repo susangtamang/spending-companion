@@ -4,7 +4,7 @@ import type { NextFunction, Request, Response } from "express";
 
 @Injectable()
 export class OperationsService {
-  private readonly prisma = process.env.DATABASE_URL ? new PrismaClient() : null;
+  private readonly prisma = process.env.API_USE_IN_MEMORY === "true" ? null : process.env.DATABASE_URL ? new PrismaClient() : null;
   private readonly counts = new Map<string, number>();
   private inFlight = 0;
   public begin() { this.inFlight += 1; }
