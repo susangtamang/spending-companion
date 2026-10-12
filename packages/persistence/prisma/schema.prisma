@@ -1,0 +1,420 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserState {
+  ACTIVE
+  DELETING
+  DELETED
+}
+
+enum BudgetMode {
+  INCLUDING_UTILITIES
+  EXCLUDING_UTILITIES
+}
+
+enum ConnectionHealth {
+  HEALTHY
+  SYNCING
+  REQUIRES_UPDATE
+  ERROR
+  DISCONNECTED
+}
+
+enum TransactionSource {
+  PLAID
+  CSV
+  MANUAL
+}
+
+enum TransactionStatus {
+  PENDING
+  POSTED
+  REMOVED
+}
+
+enum TransactionKind {
+  PURCHASE
+  REFUND
+  PAYMENT
+  TRANSFER
+  CASH
+}
+
+enum ImportStatus {
+  PREVIEWED
+  COMMITTED
+  UNDONE
+}
+
+enum ImportRowState {
+  VALID
+  INVALID
+  DUPLICATE
+  IMPORTED
+}
+
+enum SyncRunState {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum DeletionState {
+  PENDING
+  PROCESSING
+  BLOCKED
+  COMPLETED
+  FAILED
+}
+
+enum IdempotencyState {
+  IN_PROGRESS
+  COMPLETED
+}
+
+model User {
+  id String @id @default(uuid()) @db.Uuid
+  identityProvider String @map("identity_provider")
+  issuer String
+  subject String
+  email String?
+  displayName String? @map("display_name")
+  timezone String
+  currencyCode String @default("USD") @map("currency_code") @db.Char(3)
+  state UserState @default(ACTIVE)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  deletingAt DateTime? @map("deleting_at")
+  deletedAt DateTime? @map("deleted_at")
+  preference UserPreference?
+  categories Category[]
+  budgets Budget[]
+  plaidItems PlaidItem[]
+  plaidLinkSessions PlaidLinkSession[]
+  accounts Account[]
+  transactions Transaction[]
+  imports ImportBatch[]
+  deletionJobs DeletionJob[]
+  exportJobs ExportJob[]
+  idempotencyRecords IdempotencyRecord[]
+  @@unique([identityProvider, issuer, subject])
+  @@map("users")
+}
+
+model UserPreference {
+  userId String @id @map("user_id") @db.Uuid
+  defaultBudgetMode BudgetMode @default(INCLUDING_UTILITIES) @map("default_budget_mode")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@map("user_preferences")
+}
+
+model Category {
+  id String @id @default(uuid()) @db.Uuid
+  userId String? @map("user_id") @db.Uuid
+  slug String
+  name String
+  isUtility Boolean @default(false) @map("is_utility")
+  isSystem Boolean @default(false) @map("is_system")
+  archivedAt DateTime? @map("archived_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sourceTransactions Transaction[] @relation("SourceCategory")
+  overrides TransactionOverride[]
+  @@unique([userId, slug])
+  @@index([userId, archivedAt])
+  @@map("categories")
+}
+
+model Budget {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  mode BudgetMode
+  month String? @db.Char(7)
+  scopeKey String @map("scope_key") @default("default")
+  amountCents BigInt @map("amount_cents")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([userId, mode, scopeKey])
+  @@index([userId, month])
+  @@map("budgets")
+}
+
+model PlaidLinkSession {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  consentVersion String @map("consent_version")
+  consentedAt DateTime @map("consented_at")
+  expiresAt DateTime @map("expires_at")
+  usedAt DateTime? @map("used_at")
+  linkTokenHash String? @map("link_token_hash")
+  createdAt DateTime @default(now()) @map("created_at")
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, expiresAt])
+  @@map("plaid_link_sessions")
+}
+
+model PlaidItem {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  providerItemId String @map("provider_item_id")
+  institutionId String? @map("institution_id")
+  institutionName String @map("institution_name")
+  encryptedAccessToken Bytes @map("encrypted_access_token")
+  keyVersion String @map("key_version")
+  syncCursor String? @map("sync_cursor")
+  health ConnectionHealth @default(HEALTHY)
+  consentVersion String @map("consent_version")
+  consentedAt DateTime @map("consented_at")
+  consentExpiresAt DateTime? @map("consent_expires_at")
+  lastSuccessfulSyncAt DateTime? @map("last_successful_sync_at")
+  disconnectedAt DateTime? @map("disconnected_at")
+  disconnectHistoryPolicy String? @map("disconnect_history_policy")
+  tokenPurgedAt DateTime? @map("token_purged_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accounts Account[]
+  syncRuns SyncRun[]
+  webhookReceipts WebhookReceipt[]
+  @@unique([userId, providerItemId])
+  @@unique([id, userId])
+  @@index([userId, health])
+  @@map("plaid_items")
+}
+
+model Account {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  plaidItemId String @map("plaid_item_id") @db.Uuid
+  providerAccountId String @map("provider_account_id")
+  name String
+  officialName String? @map("official_name")
+  mask String?
+  type String
+  subtype String?
+  includeInSpending Boolean @default(true) @map("include_in_spending")
+  currencyCode String @default("USD") @map("currency_code") @db.Char(3)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plaidItem PlaidItem @relation(fields: [plaidItemId, userId], references: [id, userId], onDelete: Cascade)
+  transactions Transaction[]
+  @@unique([userId, providerAccountId])
+  @@unique([id, userId])
+  @@index([userId, includeInSpending])
+  @@map("accounts")
+}
+
+model Transaction {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  accountId String? @map("account_id") @db.Uuid
+  source TransactionSource
+  sourceScope String @map("source_scope")
+  sourceTransactionId String? @map("source_transaction_id")
+  status TransactionStatus
+  kind TransactionKind
+  amountCents BigInt @map("amount_cents")
+  currencyCode String @default("USD") @map("currency_code") @db.Char(3)
+  rawMerchant String? @map("raw_merchant")
+  displayMerchant String @map("display_merchant")
+  normalizedMerchant String @map("normalized_merchant")
+  sourceCategoryId String? @map("source_category_id") @db.Uuid
+  occurrenceDate DateTime @map("occurrence_date") @db.Date
+  postedDate DateTime? @map("posted_date") @db.Date
+  /// Provider pending transaction ID; may arrive before the pending row itself.
+  pendingSourceTransactionId String? @map("pending_source_transaction_id")
+  reconciledToTransactionId String? @map("reconciled_to_transaction_id") @db.Uuid
+  removedAt DateTime? @map("removed_at")
+  sourceCreatedAt DateTime? @map("source_created_at")
+  sourceUpdatedAt DateTime? @map("source_updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account Account? @relation(fields: [accountId, userId], references: [id, userId], onDelete: Restrict)
+  sourceCategory Category? @relation("SourceCategory", fields: [sourceCategoryId], references: [id], onDelete: SetNull)
+  override TransactionOverride?
+  audits TransactionAudit[]
+  importRows ImportRow[]
+  reconciledTo Transaction? @relation("ReconciledTo", fields: [reconciledToTransactionId], references: [id], onDelete: Restrict)
+  reconciledPending Transaction[] @relation("ReconciledTo")
+  @@unique([userId, source, sourceScope, sourceTransactionId])
+  @@unique([id, userId])
+  @@index([userId, occurrenceDate, postedDate, status, kind])
+  @@index([accountId, sourceTransactionId])
+  @@index([userId, accountId, pendingSourceTransactionId])
+  @@map("transactions")
+}
+
+model TransactionOverride {
+  transactionId String @id @map("transaction_id") @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  categoryId String? @map("category_id") @db.Uuid
+  displayMerchant String? @map("display_merchant")
+  note String?
+  updatedAt DateTime @updatedAt @map("updated_at")
+  transaction Transaction @relation(fields: [transactionId, userId], references: [id, userId], onDelete: Cascade)
+  category Category? @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  @@unique([transactionId, userId])
+  @@index([userId])
+  @@map("transaction_overrides")
+}
+
+model TransactionAudit {
+  id String @id @default(uuid()) @db.Uuid
+  transactionId String @map("transaction_id") @db.Uuid
+  action String
+  actor String
+  before Json?
+  after Json?
+  createdAt DateTime @default(now()) @map("created_at")
+  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  @@index([transactionId, createdAt])
+  @@map("transaction_audit")
+}
+
+model ImportBatch {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  fileName String @map("file_name")
+  status ImportStatus
+  formatVersion String @map("format_version")
+  fingerprint String
+  importContext String @map("import_context")
+  expiresAt DateTime @map("expires_at")
+  totalRows Int @map("total_rows")
+  importedRows Int @default(0) @map("imported_rows")
+  duplicateRows Int @default(0) @map("duplicate_rows")
+  invalidRows Int @default(0) @map("invalid_rows")
+  createdAt DateTime @default(now()) @map("created_at")
+  committedAt DateTime? @map("committed_at")
+  undoneAt DateTime? @map("undone_at")
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rows ImportRow[]
+  @@unique([id, userId])
+  @@index([userId, createdAt])
+  @@map("import_batches")
+}
+
+model ImportRow {
+  id String @id @default(uuid()) @db.Uuid
+  batchId String @map("batch_id") @db.Uuid
+  rowNumber Int @map("row_number")
+  sourceId String? @map("source_id")
+  rawRecord Json @map("raw_record")
+  state ImportRowState
+  errors Json?
+  transactionId String? @map("transaction_id") @db.Uuid
+  batch ImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  transaction Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+  @@unique([batchId, rowNumber])
+  @@map("import_rows")
+}
+
+model SyncRun {
+  id String @id @default(uuid()) @db.Uuid
+  plaidItemId String @map("plaid_item_id") @db.Uuid
+  startingCursor String? @map("starting_cursor")
+  endingCursor String? @map("ending_cursor")
+  state SyncRunState
+  addedCount Int @default(0) @map("added_count")
+  modifiedCount Int @default(0) @map("modified_count")
+  removedCount Int @default(0) @map("removed_count")
+  errorCode String? @map("error_code")
+  attemptCount Int @default(0) @map("attempt_count")
+  startedAt DateTime? @map("started_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  completedAt DateTime? @map("completed_at")
+  plaidItem PlaidItem @relation(fields: [plaidItemId], references: [id], onDelete: Cascade)
+  @@index([plaidItemId, createdAt])
+  @@map("sync_runs")
+}
+
+model WebhookReceipt {
+  id String @id @default(uuid()) @db.Uuid
+  dedupeHash String @unique @map("dedupe_hash")
+  plaidItemId String? @map("plaid_item_id") @db.Uuid
+  webhookType String @map("webhook_type")
+  webhookCode String @map("webhook_code")
+  payload Json @default("{}")
+  verificationKeyId String? @map("verification_key_id")
+  attemptCount Int @default(0) @map("attempt_count")
+  processingErrorCode String? @map("processing_error_code")
+  receivedAt DateTime @default(now()) @map("received_at")
+  processedAt DateTime? @map("processed_at")
+  plaidItem PlaidItem? @relation(fields: [plaidItemId], references: [id], onDelete: SetNull)
+  @@map("webhook_receipts")
+}
+
+model DeletionJob {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  idempotencyKey String @map("idempotency_key")
+  state DeletionState
+  encryptedIdentity Bytes? @map("encrypted_identity")
+  retryCount Int @default(0) @map("retry_count")
+  failureCode String? @map("failure_code")
+  requestedAt DateTime @default(now()) @map("requested_at")
+  processingStartedAt DateTime? @map("processing_started_at")
+  blockedAt DateTime? @map("blocked_at")
+  failedAt DateTime? @map("failed_at")
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([userId, idempotencyKey])
+  @@map("deletion_jobs")
+}
+
+model ExportJob {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  format String
+  state String
+  payload Json
+  createdAt DateTime @default(now()) @map("created_at")
+  readyAt DateTime? @map("ready_at")
+  expiresAt DateTime @map("expires_at")
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, createdAt])
+  @@index([expiresAt])
+  @@map("export_jobs")
+}
+
+model DeletionTombstone {
+  operationId String @id @map("operation_id") @db.Uuid
+  state DeletionState
+  identityHash String @unique @map("identity_hash")
+  requestedAt DateTime @map("requested_at")
+  completedAt DateTime @map("completed_at")
+  expiresAt DateTime @map("expires_at")
+  @@index([expiresAt])
+  @@map("deletion_tombstones")
+}
+
+model IdempotencyRecord {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  key String
+  method String
+  path String
+  bodyFingerprint String @map("body_fingerprint")
+  state IdempotencyState @default(IN_PROGRESS)
+  responseStatus Int? @map("response_status")
+  responseBody Json? @map("response_body")
+  createdAt DateTime @default(now()) @map("created_at")
+  completedAt DateTime? @map("completed_at")
+  expiresAt DateTime @map("expires_at")
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([userId, key])
+  @@index([expiresAt])
+  @@map("idempotency_records")
+}

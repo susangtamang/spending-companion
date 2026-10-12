@@ -1,0 +1,23 @@
+{
+  "name": "@spending-companion/banking",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/banking/src/index.js",
+  "types": "./dist/banking/src/index.d.ts",
+  "exports": { ".": { "types": "./dist/banking/src/index.d.ts", "default": "./dist/banking/src/index.js" } },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run src --pool=threads --maxWorkers=1"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.16.3",
+    "@spending-companion/contracts": "file:../contracts",
+    "@spending-companion/domain": "file:../domain",
+    "@spending-companion/persistence": "file:../persistence",
+    "@spending-companion/plaid": "file:../plaid",
+    "@spending-companion/reconciliation": "file:../reconciliation"
+  },
+  "devDependencies": { "@types/node": "^22.19.11", "typescript": "^5.9.3", "vitest": "^5.0.3" }
+}

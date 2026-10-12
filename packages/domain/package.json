@@ -1,0 +1,20 @@
+{
+  "name": "@spending-companion/domain",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/domain/src/index.js",
+  "types": "./dist/domain/src/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run src --pool=threads --maxWorkers=1"
+  },
+  "dependencies": {
+    "@spending-companion/contracts": "file:../contracts"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.3"
+  }
+}

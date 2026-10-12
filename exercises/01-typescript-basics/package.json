@@ -1,0 +1,14 @@
+{
+  "name": "spending-companion-typescript-basics",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Learning exercise for TypeScript transaction types and integer-cent calculations.",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "build": "tsc",
+    "start": "node dist/transactions.js"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2"
+  }
+}

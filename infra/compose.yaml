@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: spending_companion
+      POSTGRES_USER: spending_companion
+      POSTGRES_PASSWORD: local-development-only
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U spending_companion -d spending_companion"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - spending_companion_postgres:/var/lib/postgresql/data
+
+volumes:
+  spending_companion_postgres:

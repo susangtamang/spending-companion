@@ -1,0 +1,41 @@
+name: Verify
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: spending_companion_test
+          POSTGRES_USER: spending_companion
+          POSTGRES_PASSWORD: ci-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U spending_companion -d spending_companion_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://spending_companion:ci-only-password@localhost:5432/spending_companion_test?schema=public
+      TEST_DATABASE_URL: postgresql://spending_companion:ci-only-password@localhost:5432/spending_companion_test?schema=public
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run prisma:generate -w @spending-companion/persistence
+      - run: npm run db:migrate
+      - run: npm run build
+      - run: npm run check
+      - run: npm test

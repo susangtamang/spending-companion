@@ -1,0 +1,30 @@
+{
+  "name": "spending-companion",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "check": "npm run check --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "doctor": "npm run doctor -w mobile",
+    "build": "npm run build -w @spending-companion/contracts && npm run build -w @spending-companion/domain && npm run build -w @spending-companion/imports && npm run build -w @spending-companion/reconciliation && npm run build -w @spending-companion/auth && npm run build -w @spending-companion/persistence && npm run build -w @spending-companion/plaid && npm run build -w @spending-companion/banking && npm run build -w @spending-companion/api",
+    "db:start": "docker compose -f infra/compose.yaml up -d postgres",
+    "db:stop": "docker compose -f infra/compose.yaml stop",
+    "db:migrate": "node --env-file-if-exists=.env node_modules/prisma/build/index.js migrate deploy --schema packages/persistence/prisma/schema.prisma",
+    "api:start": "npm run start -w @spending-companion/api"
+  },
+  "engines": {
+    "node": "22.x"
+  },
+  "overrides": {
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
+  },
+  "devDependencies": {
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
+  }
+}

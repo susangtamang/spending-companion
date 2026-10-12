@@ -1,0 +1,28 @@
+{
+  "name": "@spending-companion/imports",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pure CSV import planning for Spending Companion.",
+  "type": "module",
+  "main": "./dist/imports/src/index.js",
+  "types": "./dist/imports/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/imports/src/index.d.ts",
+      "default": "./dist/imports/src/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run test --pool=threads --maxWorkers=1"
+  },
+  "dependencies": {
+    "@spending-companion/contracts": "file:../contracts"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.3"
+  }
+}

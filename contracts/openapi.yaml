@@ -1,0 +1,1239 @@
+openapi: 3.1.0
+info:
+  title: Spending Companion API
+  version: 1.0.0
+  description: US-only, USD-only API contract for Spending Companion Version 1.
+servers:
+  - url: http://localhost:3000
+    description: Local development
+security:
+  - bearerAuth: []
+tags:
+  - name: System
+  - name: Users
+  - name: Plaid
+  - name: Accounts
+  - name: Transactions
+  - name: Budgets
+  - name: Categories
+  - name: Summaries
+  - name: Imports
+  - name: Privacy
+
+paths:
+  /health:
+    get:
+      tags: [System]
+      operationId: getHealth
+      security: []
+      responses:
+        '200':
+          description: Service is healthy.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+
+  /ready:
+    get:
+      tags: [System]
+      operationId: getReadiness
+      security: []
+      description: Verifies that the API can reach its required PostgreSQL dependency.
+      responses:
+        '200':
+          description: Service is ready to receive traffic.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Readiness' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /internal/metrics:
+    get:
+      tags: [System]
+      operationId: getInternalMetrics
+      description: Internal Prometheus metrics. This route uses a dedicated operations bearer token, not a user session token.
+      security:
+        - operationsBearer: []
+      responses:
+        '200':
+          description: Process-local operational metrics.
+          content:
+            text/plain:
+              schema: { type: string }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/me:
+    get:
+      tags: [Users]
+      operationId: getCurrentUser
+      responses:
+        '200':
+          description: Current authenticated user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    patch:
+      tags: [Users]
+      operationId: updateCurrentUser
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserRequest'
+      responses:
+        '200':
+          description: Updated user.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/plaid/link-token:
+    post:
+      tags: [Plaid]
+      operationId: createPlaidLinkToken
+      description: Creates a Link token for a new US institution connection.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [consentAccepted, consentVersion]
+              properties:
+                consentAccepted: { type: boolean, const: true }
+                consentVersion: { type: string, minLength: 1, maxLength: 50 }
+                redirectUri: { type: string, format: uri }
+      responses:
+        '201':
+          description: Short-lived Link token. Never log this value.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LinkTokenResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/plaid/exchange:
+    post:
+      tags: [Plaid]
+      operationId: exchangePlaidPublicToken
+      description: Exchanges a one-time public token server-side and starts initial sync.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [publicToken, linkSessionId, institutionName]
+              properties:
+                publicToken: { type: string, minLength: 1, writeOnly: true }
+                linkSessionId: { type: string, minLength: 1 }
+                institutionId: { type: string }
+                institutionName: { type: string }
+      responses:
+        '201':
+          description: Item stored and initial synchronization queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BankConnection' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/plaid/items:
+    get:
+      tags: [Plaid]
+      operationId: listPlaidItems
+      responses:
+        '200':
+          description: User's bank connections. Access tokens are never returned.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/BankConnection' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/plaid/items/{itemId}/update-link-token:
+    post:
+      tags: [Plaid]
+      operationId: createPlaidUpdateLinkToken
+      parameters:
+        - $ref: '#/components/parameters/ItemId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '201':
+          description: Link token configured for update mode.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LinkTokenResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/plaid/items/{itemId}/sync:
+    post:
+      tags: [Plaid]
+      operationId: syncPlaidItem
+      parameters:
+        - $ref: '#/components/parameters/ItemId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '201':
+          description: Idempotent sync job queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/plaid/items/{itemId}:
+    delete:
+      tags: [Plaid]
+      operationId: removePlaidItem
+      description: Calls Plaid item removal, deletes the stored token, and either retains or deletes imported history.
+      parameters:
+        - $ref: '#/components/parameters/ItemId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - name: transactionHistory
+          in: query
+          required: true
+          schema: { type: string, enum: [retain, delete] }
+      responses:
+        '200':
+          description: Connection removed, token purged, and the selected history policy recorded.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BankConnection' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/webhooks/plaid:
+    post:
+      tags: [Plaid]
+      operationId: receivePlaidWebhook
+      description: Signature-verified Plaid webhook; acknowledges only after durable, idempotent enqueue.
+      security: []
+      parameters:
+        - name: Plaid-Verification
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '201': { description: Webhook durably accepted or previously accepted. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/accounts:
+    get:
+      tags: [Accounts]
+      operationId: listAccounts
+      responses:
+        '200':
+          description: User's financial accounts.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/FinancialAccount' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/accounts/{accountId}:
+    patch:
+      tags: [Accounts]
+      operationId: updateAccount
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                displayName: { type: string, minLength: 1, maxLength: 100 }
+                includeInSpending: { type: boolean }
+              minProperties: 1
+      responses:
+        '200':
+          description: Updated account.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialAccount' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/transactions:
+    get:
+      tags: [Transactions]
+      operationId: listTransactions
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - { name: financialAccountId, in: query, schema: { type: string } }
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+        - { name: merchant, in: query, schema: { type: string } }
+        - { name: categoryId, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/TransactionStatus' } }
+        - { name: source, in: query, schema: { $ref: '#/components/schemas/TransactionSource' } }
+      responses:
+        '200':
+          description: Paginated transactions owned by the user.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TransactionPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Transactions]
+      operationId: createManualTransaction
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateTransactionRequest' }
+      responses:
+        '201':
+          description: Manual transaction created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Transaction' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/transactions/{transactionId}:
+    get:
+      tags: [Transactions]
+      operationId: getTransaction
+      parameters: [{ $ref: '#/components/parameters/TransactionId' }]
+      responses:
+        '200':
+          description: Transaction detail.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Transaction' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Transactions]
+      operationId: updateTransaction
+      description: Plaid/CSV source fields are immutable; only user-owned overrides and manual records may be changed.
+      parameters:
+        - $ref: '#/components/parameters/TransactionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateTransactionRequest' }
+      responses:
+        '200':
+          description: Updated transaction.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Transaction' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Transactions]
+      operationId: deleteManualTransaction
+      description: Deletes a manual transaction; imported source records cannot be deleted through this endpoint.
+      parameters:
+        - $ref: '#/components/parameters/TransactionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204': { description: Manual transaction deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/budgets:
+    get:
+      tags: [Budgets]
+      operationId: listBudgets
+      parameters:
+        - { name: month, in: query, description: Calendar month in YYYY-MM., schema: { type: string, pattern: '^\\d{4}-(0[1-9]|1[0-2])$' } }
+      responses:
+        '200':
+          description: Default budgets and applicable monthly overrides.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Budget' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Budgets]
+      operationId: createBudget
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpsertBudgetRequest' }
+      responses:
+        '201':
+          description: Budget created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Budget' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/budgets/{budgetId}:
+    patch:
+      tags: [Budgets]
+      operationId: updateBudget
+      parameters:
+        - $ref: '#/components/parameters/BudgetId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpsertBudgetRequest' }
+      responses:
+        '200':
+          description: Updated budget.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Budget' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Budgets]
+      operationId: deleteBudget
+      parameters:
+        - $ref: '#/components/parameters/BudgetId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204': { description: Budget deleted. }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/categories:
+    get:
+      tags: [Categories]
+      operationId: listCategories
+      responses:
+        '200':
+          description: System and user-defined categories.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Category' }
+    post:
+      tags: [Categories]
+      operationId: createCategory
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CategoryInput' }
+      responses:
+        '201':
+          description: Category created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Category' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/categories/{categoryId}:
+    patch:
+      tags: [Categories]
+      operationId: updateCategory
+      parameters:
+        - $ref: '#/components/parameters/CategoryId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CategoryInput' }
+      responses:
+        '200':
+          description: Category updated.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Category' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Categories]
+      operationId: archiveCategory
+      description: Archives a user category. System categories cannot be archived.
+      parameters:
+        - $ref: '#/components/parameters/CategoryId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204': { description: User category archived. }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/summaries/monthly:
+    get:
+      tags: [Summaries]
+      operationId: getMonthlySummary
+      parameters:
+        - name: month
+          in: query
+          required: true
+          schema: { type: string, pattern: '^\\d{4}-(0[1-9]|1[0-2])$' }
+        - name: budgetMode
+          in: query
+          schema: { $ref: '#/components/schemas/BudgetMode' }
+      responses:
+        '200':
+          description: Authoritative monthly totals and freshness.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MonthlySummary' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /v1/summaries/monthly/categories:
+    get:
+      tags: [Summaries]
+      operationId: getMonthlyCategoryBreakdown
+      parameters:
+        - $ref: '#/components/parameters/Month'
+        - { name: budgetMode, in: query, schema: { $ref: '#/components/schemas/BudgetMode' } }
+      responses:
+        '200':
+          description: Category totals reconciling to the monthly headline spent total.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/BreakdownItem' }
+
+  /v1/summaries/monthly/merchants:
+    get:
+      tags: [Summaries]
+      operationId: getMonthlyMerchantBreakdown
+      parameters:
+        - $ref: '#/components/parameters/Month'
+        - { name: budgetMode, in: query, schema: { $ref: '#/components/schemas/BudgetMode' } }
+      responses:
+        '200':
+          description: Merchant totals reconciling to the monthly headline spent total.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/BreakdownItem' }
+
+  /v1/imports/csv/preview:
+    post:
+      tags: [Imports]
+      operationId: previewCsvImport
+      description: Validates one documented CSV format without persisting transactions.
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+                financialAccountId: { type: string }
+                institutionScope: { type: string, maxLength: 100 }
+      responses:
+        '201':
+          description: Expiring preview containing valid rows, errors, and duplicates.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CsvPreview' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /v1/imports:
+    get:
+      tags: [Imports]
+      operationId: listImportBatches
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Paginated CSV import history.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/ImportBatch' }
+                  nextCursor: { type: [string, 'null'] }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/imports/{batchId}:
+    get:
+      tags: [Imports]
+      operationId: getImportBatch
+      parameters: [{ $ref: '#/components/parameters/BatchId' }]
+      responses:
+        '200':
+          description: Import batch and its row results.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ImportBatch'
+                  - type: object
+                    required: [rows]
+                    properties:
+                      rows:
+                        type: array
+                        items: { $ref: '#/components/schemas/ImportPreviewRow' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/imports/csv/commit:
+    post:
+      tags: [Imports]
+      operationId: commitCsvImport
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [previewId]
+              properties:
+                previewId: { type: string }
+                categoryOverrides:
+                  type: object
+                  additionalProperties: { type: string }
+      responses:
+        '201':
+          description: Import committed atomically.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImportBatch' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/imports/{batchId}/undo:
+    post:
+      tags: [Imports]
+      operationId: undoCsvImport
+      parameters:
+        - $ref: '#/components/parameters/BatchId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '201':
+          description: Import batch undone atomically.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImportBatch' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/reconciliations:
+    get:
+      tags: [Transactions]
+      operationId: listReconciliationCandidates
+      responses:
+        '200':
+          description: Provider-linked and heuristic pending-to-posted candidates requiring review or audit.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ReconciliationCandidate' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/reconciliations/{pendingTransactionId}/confirm:
+    post:
+      tags: [Transactions]
+      operationId: confirmReconciliation
+      parameters:
+        - name: pendingTransactionId
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [postedTransactionId]
+              properties:
+                postedTransactionId: { type: string }
+      responses:
+        '201':
+          description: Reconciliation confirmed and audit decision recorded.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReconciliationDecision' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/reconciliations/{pendingTransactionId}/reject:
+    post:
+      tags: [Transactions]
+      operationId: rejectReconciliation
+      parameters:
+        - name: pendingTransactionId
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [postedTransactionId]
+              properties:
+                postedTransactionId: { type: string }
+      responses:
+        '201':
+          description: Reconciliation rejected and audit decision recorded.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReconciliationDecision' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/exports:
+    post:
+      tags: [Privacy]
+      operationId: requestDataExport
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [format]
+              properties:
+                format: { type: string, enum: [json, csv] }
+      responses:
+        '201':
+          description: Export created and ready for authenticated download.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExportJob' }
+
+  /v1/exports/{exportId}:
+    get:
+      tags: [Privacy]
+      operationId: getDataExport
+      parameters:
+        - name: exportId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Export status and an expiring download URL when ready.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExportJob' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/exports/{exportId}/download:
+    get:
+      tags: [Privacy]
+      operationId: downloadDataExport
+      description: Downloads a ready, unexpired export owned by the authenticated user.
+      parameters:
+        - name: exportId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Export attachment in the format selected when it was created.
+          headers:
+            Content-Disposition:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+            text/csv:
+              schema: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/me/deletion:
+    post:
+      tags: [Privacy]
+      operationId: requestAccountDeletion
+      description: Requires a recent reauthentication proof and explicit confirmation.
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirmation, reauthenticationToken]
+              properties:
+                confirmation: { type: string, const: DELETE }
+                reauthenticationToken: { type: string, minLength: 1, writeOnly: true }
+      responses:
+        '201':
+          description: Account deletion processed, or returned in a retryable blocked state when provider removal cannot complete.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeletionJob' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    get:
+      tags: [Privacy]
+      operationId: getAccountDeletionStatus
+      responses:
+        '200':
+          description: Current deletion operation status, including retryable blocked state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeletionJob' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    operationsBearer:
+      type: http
+      scheme: bearer
+      description: Dedicated server-side operations token; never a Clerk user-session token.
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Unique client-generated key. Reuse returns the original result for the same authenticated user and request body.
+      schema: { type: string, minLength: 16, maxLength: 128 }
+    Cursor:
+      name: cursor
+      in: query
+      schema: { type: string }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+    Month:
+      name: month
+      in: query
+      required: true
+      schema: { type: string, pattern: '^\\d{4}-(0[1-9]|1[0-2])$' }
+    ItemId:
+      name: itemId
+      in: path
+      required: true
+      schema: { type: string }
+    AccountId:
+      name: accountId
+      in: path
+      required: true
+      schema: { type: string }
+    TransactionId:
+      name: transactionId
+      in: path
+      required: true
+      schema: { type: string }
+    BudgetId:
+      name: budgetId
+      in: path
+      required: true
+      schema: { type: string }
+    CategoryId:
+      name: categoryId
+      in: path
+      required: true
+      schema: { type: string }
+    BatchId:
+      name: batchId
+      in: path
+      required: true
+      schema: { type: string }
+
+  responses:
+    BadRequest:
+      description: Request validation failed.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+    Unauthorized:
+      description: Missing, invalid, or expired authentication.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+    Forbidden:
+      description: Authenticated user is not permitted to perform this operation.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+    NotFound:
+      description: Resource not found or not owned by the authenticated user.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+    Conflict:
+      description: Request conflicts with current resource state or a uniqueness constraint.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+    ServiceUnavailable:
+      description: A required dependency or protected operational endpoint is unavailable.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+
+  schemas:
+    Health:
+      type: object
+      required: [status, timestamp]
+      properties:
+        status: { type: string, const: ok }
+        timestamp: { type: string, format: date-time }
+    Readiness:
+      type: object
+      required: [status, timestamp]
+      properties:
+        status: { type: string, const: ready }
+        timestamp: { type: string, format: date-time }
+    ApiError:
+      type: object
+      required: [code, message, requestId]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        requestId: { type: string }
+        fieldErrors:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: string }
+    User:
+      type: object
+      required: [id, timezone, currencyCode]
+      properties:
+        id: { type: string }
+        email: { type: string, format: email }
+        displayName: { type: string }
+        timezone: { type: string, example: America/Chicago }
+        currencyCode: { type: string, const: USD }
+    UpdateUserRequest:
+      type: object
+      properties:
+        displayName: { type: [string, 'null'], maxLength: 100 }
+        timezone: { type: string, example: America/Chicago }
+      minProperties: 1
+    LinkTokenResponse:
+      type: object
+      required: [linkToken, expiration, linkSessionId]
+      properties:
+        linkToken: { type: string, writeOnly: true }
+        expiration: { type: string, format: date-time }
+        linkSessionId: { type: string }
+    BankConnection:
+      type: object
+      required: [id, provider, institutionName, health, consentedAt, consentVersion, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        provider: { type: string, const: plaid }
+        institutionId: { type: [string, 'null'] }
+        institutionName: { type: string }
+        health: { type: string, enum: [syncing, healthy, requires_update, error, disconnected] }
+        consentedAt: { type: string, format: date-time }
+        consentVersion: { type: string }
+        lastSuccessfulSyncAt: { type: [string, 'null'], format: date-time }
+        lastSyncErrorCode: { type: [string, 'null'] }
+        disconnectedAt: { type: [string, 'null'], format: date-time }
+        disconnectHistoryPolicy: { type: [string, 'null'], enum: [retain, delete, null] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    Job:
+      type: object
+      required: [id, status, createdAt]
+      properties:
+        id: { type: string }
+        status: { type: string, enum: [queued, running, completed, failed] }
+        createdAt: { type: string, format: date-time }
+    FinancialAccount:
+      type: object
+      required: [id, connectionId, name, type, currencyCode, includeInSpending, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        connectionId: { type: string }
+        name: { type: string }
+        officialName: { type: [string, 'null'] }
+        mask: { type: [string, 'null'] }
+        type: { type: string, enum: [checking, credit, savings, other] }
+        currencyCode: { type: string, const: USD }
+        includeInSpending: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    TransactionSource:
+      type: string
+      enum: [plaid, csv, manual]
+    TransactionStatus:
+      type: string
+      enum: [pending, posted, removed]
+    TransactionKind:
+      type: string
+      enum: [purchase, refund, payment, transfer, cash]
+    Transaction:
+      type: object
+      required: [id, source, status, kind, amountCents, currencyCode, displayMerchant, normalizedMerchant, occurrenceDate, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        financialAccountId: { type: [string, 'null'] }
+        source: { $ref: '#/components/schemas/TransactionSource' }
+        sourceTransactionId: { type: [string, 'null'] }
+        status: { $ref: '#/components/schemas/TransactionStatus' }
+        kind: { $ref: '#/components/schemas/TransactionKind' }
+        amountCents: { type: integer, minimum: 0, maximum: 9007199254740991 }
+        currencyCode: { type: string, const: USD }
+        rawMerchant: { type: [string, 'null'] }
+        displayMerchant: { type: string }
+        normalizedMerchant: { type: string }
+        sourceCategoryId: { type: [string, 'null'] }
+        categoryOverrideId: { type: [string, 'null'] }
+        note: { type: [string, 'null'], maxLength: 500 }
+        occurrenceDate: { type: string, format: date }
+        postedDate: { type: [string, 'null'], format: date }
+        pendingTransactionId: { type: [string, 'null'] }
+        reconciledToTransactionId: { type: [string, 'null'] }
+        importBatchId: { type: [string, 'null'] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    CreateTransactionRequest:
+      type: object
+      required: [status, kind, amountCents, displayMerchant, occurrenceDate]
+      properties:
+        financialAccountId: { type: [string, 'null'] }
+        status: { type: string, enum: [pending, posted] }
+        kind: { $ref: '#/components/schemas/TransactionKind' }
+        amountCents: { type: integer, minimum: 0, maximum: 9007199254740991 }
+        displayMerchant: { type: string, minLength: 1, maxLength: 200 }
+        categoryOverrideId: { type: [string, 'null'] }
+        note: { type: [string, 'null'], maxLength: 500 }
+        occurrenceDate: { type: string, format: date }
+        postedDate: { type: [string, 'null'], format: date }
+    UpdateTransactionRequest:
+      type: object
+      properties:
+        status: { type: string, enum: [pending, posted] }
+        kind: { $ref: '#/components/schemas/TransactionKind' }
+        amountCents: { type: integer, minimum: 0, maximum: 9007199254740991 }
+        displayMerchant: { type: string, minLength: 1, maxLength: 200 }
+        categoryOverrideId: { type: [string, 'null'] }
+        note: { type: [string, 'null'], maxLength: 500 }
+        occurrenceDate: { type: string, format: date }
+        postedDate: { type: [string, 'null'], format: date }
+      minProperties: 1
+    TransactionPage:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Transaction' }
+        nextCursor: { type: [string, 'null'] }
+    BudgetMode:
+      type: string
+      enum: [including_utilities, excluding_utilities]
+    Budget:
+      type: object
+      required: [id, mode, amountCents, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        mode: { $ref: '#/components/schemas/BudgetMode' }
+        month: { type: [string, 'null'], pattern: '^\\d{4}-(0[1-9]|1[0-2])$' }
+        amountCents: { type: integer, minimum: 0, maximum: 9007199254740991 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    UpsertBudgetRequest:
+      type: object
+      required: [mode, amountCents]
+      properties:
+        mode: { $ref: '#/components/schemas/BudgetMode' }
+        month: { type: [string, 'null'], pattern: '^\\d{4}-(0[1-9]|1[0-2])$' }
+        amountCents: { type: integer, minimum: 0, maximum: 9007199254740991 }
+    Category:
+      type: object
+      required: [id, name, isUtility, isSystem, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        isUtility: { type: boolean }
+        isSystem: { type: boolean }
+        archivedAt: { type: [string, 'null'], format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    CategoryInput:
+      type: object
+      required: [name, isUtility]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        isUtility: { type: boolean }
+    MonthlySummary:
+      type: object
+      required: [month, timezone, budgetMode, budgetCents, postedCents, pendingCents, spentCents, availableCents, overspentCents, transactionCount, categoryBreakdown, merchantBreakdown, calculatedAt, isStale]
+      properties:
+        month: { type: string, pattern: '^\\d{4}-(0[1-9]|1[0-2])$' }
+        timezone: { type: string }
+        budgetMode: { $ref: '#/components/schemas/BudgetMode' }
+        budgetCents: { type: integer }
+        postedCents: { type: integer, minimum: 0 }
+        pendingCents: { type: integer, minimum: 0 }
+        spentCents: { type: integer, minimum: 0 }
+        availableCents: { type: integer }
+        overspentCents: { type: integer, minimum: 0 }
+        transactionCount: { type: integer, minimum: 0 }
+        categoryBreakdown:
+          type: array
+          items: { $ref: '#/components/schemas/BreakdownItem' }
+        merchantBreakdown:
+          type: array
+          items: { $ref: '#/components/schemas/BreakdownItem' }
+        calculatedAt: { type: string, format: date-time }
+        dataFreshAsOf: { type: [string, 'null'], format: date-time }
+        isStale: { type: boolean }
+    BreakdownItem:
+      type: object
+      required: [id, label, amountCents, transactionCount]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        amountCents: { type: integer, minimum: 0 }
+        transactionCount: { type: integer, minimum: 0 }
+    CsvPreview:
+      type: object
+      required: [id, expiresAt, rows]
+      properties:
+        id: { type: string }
+        expiresAt: { type: string, format: date-time }
+        rows:
+          type: array
+          items: { $ref: '#/components/schemas/ImportPreviewRow' }
+    ImportPreviewRow:
+      type: object
+      required: [rowNumber, disposition, errors]
+      properties:
+        rowNumber: { type: integer, minimum: 2 }
+        disposition: { type: string, enum: [valid, invalid, duplicate] }
+        transaction: { $ref: '#/components/schemas/Transaction' }
+        errors:
+          type: array
+          items: { $ref: '#/components/schemas/ImportRowError' }
+        suggestedCategoryId: { type: [string, 'null'] }
+    ImportRowError:
+      type: object
+      required: [rowNumber, code, message]
+      properties:
+        rowNumber: { type: integer, minimum: 2 }
+        field: { type: [string, 'null'] }
+        code: { type: string }
+        message: { type: string }
+    ImportBatch:
+      type: object
+      required: [id, fileName, status, totalRows, importedRows, duplicateRows, invalidRows, createdAt]
+      properties:
+        id: { type: string }
+        fileName: { type: string }
+        status: { type: string, enum: [previewed, committed, undone] }
+        totalRows: { type: integer, minimum: 0 }
+        importedRows: { type: integer, minimum: 0 }
+        duplicateRows: { type: integer, minimum: 0 }
+        invalidRows: { type: integer, minimum: 0 }
+        createdAt: { type: string, format: date-time }
+        committedAt: { type: [string, 'null'], format: date-time }
+        undoneAt: { type: [string, 'null'], format: date-time }
+    ExportJob:
+      type: object
+      required: [id, status, format, createdAt]
+      properties:
+        id: { type: string }
+        status: { type: string, enum: [queued, running, ready, failed, expired] }
+        format: { type: string, enum: [json, csv] }
+        downloadUrl: { type: [string, 'null'], format: uri-reference }
+        expiresAt: { type: [string, 'null'], format: date-time }
+        createdAt: { type: string, format: date-time }
+    DeletionJob:
+      type: object
+      required: [id, status, requestedAt, updatedAt]
+      properties:
+        id: { type: string }
+        status: { type: string, enum: [pending, processing, blocked, completed, failed] }
+        requestedAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        completedAt: { type: [string, 'null'], format: date-time }
+        nextRetryAt: { type: [string, 'null'], format: date-time }
+        failureCode: { type: [string, 'null'] }
+    AuditMetadata:
+      type: [object, 'null']
+      properties:
+        sanitizedSource:
+          type: object
+          additionalProperties: true
+        sourceRevision: { type: [string, 'null'] }
+        removedAt: { type: [string, 'null'], format: date-time }
+        removalReason: { type: [string, 'null'] }
+      description: Sanitized source and audit metadata; never contains provider credentials.
+    ReconciliationCandidate:
+      type: object
+      required: [pendingTransactionId, postedTransactionId, reason, factors, requiresConfirmation]
+      properties:
+        pendingTransactionId: { type: string }
+        postedTransactionId: { type: string }
+        reason: { type: string, enum: [provider_link, heuristic] }
+        score: { type: [number, 'null'], minimum: 0, maximum: 1 }
+        factors:
+          type: array
+          items: { type: string, enum: [account, amount, merchant, date] }
+        requiresConfirmation: { type: boolean }
+    ReconciliationDecision:
+      type: object
+      required: [id, pendingTransactionId, postedTransactionId, decision, decidedBy, decidedAt]
+      properties:
+        id: { type: string }
+        pendingTransactionId: { type: string }
+        postedTransactionId: { type: string }
+        decision: { type: string, enum: [confirmed, rejected] }
+        decidedBy: { type: string, enum: [provider, user] }
+        decidedAt: { type: string, format: date-time }

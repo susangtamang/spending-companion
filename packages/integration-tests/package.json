@@ -1,0 +1,21 @@
+{
+  "name": "@spending-companion/integration-tests",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cross-package domain workflow proofs for Spending Companion.",
+  "type": "module",
+  "scripts": {
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run src --pool=threads --maxWorkers=1"
+  },
+  "dependencies": {
+    "@spending-companion/contracts": "file:../contracts",
+    "@spending-companion/domain": "file:../domain",
+    "@spending-companion/imports": "file:../imports",
+    "@spending-companion/reconciliation": "file:../reconciliation"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.3"
+  }
+}

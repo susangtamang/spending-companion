@@ -1,0 +1,54 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+coverage/
+*.tsbuildinfo
+
+# Local databases, dumps, and runtime data
+*.db
+*.sqlite
+*.sqlite3
+*.dump
+*.sql.gz
+backups/
+tmp/
+logs/
+*.log
+
+# Secrets and signing material
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.mobileprovision
+*.p8
+*.cer
+*.der
+secrets/
+.secrets/
+
+# Expo/EAS and native build output
+.expo/
+.eas/
+web-build/
+android/
+ios/
+.metro-health-check*
+
+# Test and tool output
+.turbo/
+.cache/
+.eslintcache
+playwright-report/
+test-results/
+
+# Local editor and operating-system files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+

@@ -1,0 +1,50 @@
+{
+  "expo": {
+    "name": "Spending Companion",
+    "slug": "spending-companion",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/spending-companion-icon-1024.png",
+    "userInterfaceStyle": "light",
+    "scheme": "spendingcompanion",
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "@clerk/expo",
+      "expo-document-picker",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/spending-companion-mark-1024.png",
+          "imageWidth": 240,
+          "resizeMode": "contain",
+          "backgroundColor": "#153D35"
+        }
+      ]
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.susang.spendingcompanion",
+      "buildNumber": "1"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#153D35",
+        "foregroundImage": "./assets/spending-companion-mark-1024.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "package": "com.susang.spendingcompanion",
+      "versionCode": 1
+    },
+    "web": {
+      "favicon": "./assets/spending-companion-icon-1024.png"
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "22775ef3-8f9d-4c0b-b19f-ae5ceb5ea4fa"
+      }
+    },
+    "owner": "stamang"
+  }
+}

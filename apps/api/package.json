@@ -1,0 +1,38 @@
+{
+  "name": "@spending-companion/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "start": "node --env-file-if-exists=../../.env dist/main.js",
+    "test": "vitest run --pool=threads --maxWorkers=1"
+  },
+  "dependencies": {
+    "@nestjs/common": "^11.1.6",
+    "@nestjs/core": "^11.1.6",
+    "@nestjs/platform-express": "^11.1.6",
+    "@spending-companion/contracts": "file:../../packages/contracts",
+    "@spending-companion/domain": "file:../../packages/domain",
+    "@spending-companion/imports": "file:../../packages/imports",
+    "@spending-companion/auth": "file:../../packages/auth",
+    "@spending-companion/banking": "file:../../packages/banking",
+    "@spending-companion/persistence": "file:../../packages/persistence",
+    "@spending-companion/plaid": "file:../../packages/plaid",
+    "@spending-companion/reconciliation": "file:../../packages/reconciliation",
+    "@prisma/client": "^6.16.3",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2"
+  },
+  "devDependencies": {
+    "@nestjs/testing": "^11.1.6",
+    "@types/express": "^5.0.3",
+    "@types/node": "^24.7.2",
+    "@types/multer": "^2.0.0",
+    "@types/supertest": "^6.0.3",
+    "supertest": "^7.1.4",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.3"
+  }
+}
